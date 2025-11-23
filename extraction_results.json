@@ -1,0 +1,58 @@
+[
+  {
+    "product_name": "Canon EOS R5 Mark II Mirrorless Camera",
+    "image_count": 22,
+    "primary_image": "c:\\AI Projects\\attribute_extraction_app\\raw_images\\Canon EOS R5 Mark II Mirrorless Camera\\canon-eos-r5-mark-ii-mirrorless_car5m2.webp",
+    "attributes": {
+      "Color": "Black",
+      "Body Material": "Magnesium Alloy",
+      "Dimensions": null,
+      "Weight": null,
+      "Sensor Type": "CMOS",
+      "Display Type": "LCD",
+      "Viewfinder Type": "Electronic",
+      "Battery Type": null,
+      "Memory Card Slot": "Dual Card Slots",
+      "USB Port Type": "USB Type-C",
+      "Hot Shoe Mount": "Yes",
+      "Tripod Socket": "Yes",
+      "Low Pass Filter": "Yes",
+      "Auto White Balance": "Yes",
+      "AE Lock Button": "Yes",
+      "Shutter Release Type": "Electronic",
+      "Lens Mount": "Canon RF",
+      "Connectivity Features": "Wi-Fi, Bluetooth",
+      "Video Capabilities": "8K",
+      "Autofocus System": "Dual Pixel CMOS AF"
+    },
+    "product_description": "The Canon EOS R5 Mark II is a professional-grade mirrorless camera designed for unparalleled image quality and performance. Featuring a robust magnesium alloy body, it offers exceptional durability for demanding shooting conditions. Capture stunning visuals with its high-resolution CMOS sensor, complemented by the advanced Dual Pixel CMOS AF system for lightning-fast and precise autofocus. The electronic viewfinder provides a clear and immersive shooting experience. Record breathtaking videos in up to 8K resolution. Connectivity options include built-in Wi-Fi and Bluetooth for seamless image transfer and remote control. Equipped with dual card slots, a USB Type-C port, and a hot shoe mount, this camera is ready to handle any creative challenge. The EOS R5 Mark II also incorporates advanced features such as Auto White Balance, an AE lock button, and a reliable electronic shutter release. Paired with the versatile Canon RF lens mount, it opens up a world of optical possibilities. "
+  },
+  {
+    "product_name": "Sony Alpha a7 IV Mirrorless Camera",
+    "image_count": 20,
+    "primary_image": "c:\\AI Projects\\attribute_extraction_app\\raw_images\\Sony Alpha a7 IV Mirrorless Camera\\sony-alpha-a7-iv-mirrorless-camera_isoa7m4.webp",
+    "attributes": {
+      "Color": "Black",
+      "Body Material": null,
+      "Dimensions": null,
+      "Weight": null,
+      "Sensor Type": "Full-frame",
+      "Display Type": null,
+      "Viewfinder Type": "Electronic",
+      "Battery Type": null,
+      "Memory Card Slot": null,
+      "USB Port Type": null,
+      "Hot Shoe Mount": "Yes",
+      "Tripod Socket": "Yes",
+      "Low Pass Filter": "Yes",
+      "Auto White Balance": "Yes",
+      "AE Lock Button": "Yes",
+      "Shutter Release Type": "Electronic",
+      "Lens Mount": "Sony E-mount",
+      "Connectivity Features": null,
+      "Video Capabilities": null,
+      "Autofocus System": null
+    },
+    "product_description": "Capture stunning imagery and professional-quality video with this high-performance mirrorless camera. Featuring a full-frame sensor and a versatile Sony E-mount, this camera delivers exceptional detail, dynamic range, and low-light performance. The integrated electronic viewfinder provides a clear and accurate representation of your scene, while the comprehensive autofocus system ensures sharp, precise focus. Equipped with a hot shoe mount and tripod socket, this camera is ready for any shooting scenario. Experience the power and flexibility of a full-frame mirrorless camera and elevate your photography to new heights."
+  }
+]
