@@ -14,6 +14,7 @@ from main import ProductExtractionPipeline
 import os
 from PIL import Image
 
+
 # Page configuration
 st.set_page_config(
     page_title="Camera Attribute Extraction Agent",
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 st.title("🤖 Autonomous Camera Attribute Extraction Agent")
+
 st.write("""
 Powered by **Google Agent Development Kit (ADK)** with Sequential Agents.
 Upload product images and the autonomous agent will analyze, search for manufacturer specs, 
@@ -96,9 +98,16 @@ input_method = st.radio(
     horizontal=True
 )
 
-source_folder = None
-product_folders = None
-base_path = None
+# Initialize session state for inputs
+if 'source_folder' not in st.session_state:
+    st.session_state.source_folder = None
+if 'product_folders' not in st.session_state:
+    st.session_state.product_folders = None
+
+source_folder = st.session_state.source_folder
+product_folders = st.session_state.product_folders
+base_path = st.session_state.source_folder # simplified
+
 
 # ============================================================================
 # FOLDER PATH INPUT
@@ -119,11 +128,13 @@ if input_method == "📁 Folder Path":
     
     if load_button:
         if os.path.isdir(folder_input):
-            source_folder = folder_input
-            product_folders = [
+            st.session_state.source_folder = folder_input
+            st.session_state.product_folders = [
                 p for p in Path(folder_input).iterdir() 
                 if p.is_dir() and not p.name.startswith('__')
             ]
+            source_folder = st.session_state.source_folder
+            product_folders = st.session_state.product_folders
             base_path = folder_input
             st.success(f"✓ Folder loaded: {folder_input}")
             if product_folders:
@@ -153,11 +164,13 @@ else:  # ZIP upload
             with zipfile.ZipFile(zip_path, "r") as z:
                 z.extractall(tmpdir)
             
-            product_folders = [
+            st.session_state.product_folders = [
                 p for p in Path(tmpdir).iterdir()
                 if p.is_dir() and not p.name.startswith('__')
             ]
-            source_folder = "zip"
+            st.session_state.source_folder = "zip"
+            source_folder = st.session_state.source_folder
+            product_folders = st.session_state.product_folders
             base_path = tmpdir
             st.success(f"✓ ZIP file uploaded successfully")
             st.info(f"Found {len(product_folders)} product folder(s)")
@@ -189,6 +202,7 @@ if source_folder and product_folders and len(product_folders) > 0:
     
     # Process if button was clicked or processing is in progress
     if button_clicked or st.session_state.processing_started:
+
         st.info("⏳ Starting ADK Sequential Agent Pipeline...")
         st.write(f"📁 Processing {len(product_folders)} product folder(s)...")
         
@@ -241,20 +255,31 @@ if source_folder and product_folders and len(product_folders) > 0:
                     st.write(f"✅ Found {len(images)} image(s)")
                     st.write("🔄 Running pipeline...")
                 
+                
                 # Run the ADK pipeline with better error handling
                 try:
-                    # Use asyncio.run() for Streamlit compatibility
+                    # Use a persistent loop to avoid "Event loop is closed" errors
+                    if 'event_loop' not in st.session_state:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        st.session_state.event_loop = loop
+                    else:
+                        loop = st.session_state.event_loop
+                        # Ensure it's the current loop
+                        asyncio.set_event_loop(loop)
+
                     with status_container:
                         st.write("⏳ Executing async pipeline...")
                     
                     # Use spinner for better UX
                     with st.spinner(f"Processing {product_name}... This may take 1-3 minutes."):
-                        result = asyncio.run(
+                        result = loop.run_until_complete(
                             pipeline.run_extraction_pipeline(
                                 product_name,
                                 product_path
                             )
                         )
+
                     
                     results.append(result)
                     
@@ -325,80 +350,80 @@ if source_folder and product_folders and len(product_folders) > 0:
             for prod in display_results:
                 product_name = prod.get("product_name", "Unknown")
             
-            with st.expander(f"📷 {product_name}", expanded=True):
-                if "error" in prod and prod.get("status") == "failed":
-                    st.error(f"❌ Error: {prod['error']}")
-                else:
-                    # Create layout: image left, attributes right
-                    img_col, attr_col = st.columns([1, 1.5])
-                    
-                    # ==================== IMAGE COLUMN ====================
-                    with img_col:
-                        st.write("**Product Image:**")
+                with st.expander(f"📷 {product_name}", expanded=True):
+                    if "error" in prod and prod.get("status") == "failed":
+                        st.error(f"❌ Error: {prod['error']}")
+                    else:
+                        # Create layout: image left, attributes right
+                        img_col, attr_col = st.columns([1, 1.5])
                         
-                        # Find images in the original product folder
-                        image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-                        
-                        # Try to find the original product folder
-                        original_folder = None
-                        for pf in product_folders:
-                            if pf.name == product_name:
-                                original_folder = pf
-                                break
-                        
-                        if original_folder:
-                            images = sorted([
-                                f for f in original_folder.iterdir()
-                                if f.suffix.lower() in image_extensions
-                            ])
+                        # ==================== IMAGE COLUMN ====================
+                        with img_col:
+                            st.write("**Product Image:**")
                             
-                            if images:
-                                try:
-                                    img = Image.open(images[0])
-                                    st.image(img, caption=images[0].name, use_container_width=True)
-                                except Exception as e:
-                                    st.warning(f"Could not load image: {e}")
-                            else:
-                                st.info("No images found")
-                        else:
-                            st.info("Original product folder not accessible")
-                    
-                    # ==================== ATTRIBUTES COLUMN ====================
-                    with attr_col:
-                        # Product Description
-                        st.write("**Product Description:**")
-                        description = prod.get("product_description", "N/A")
-                        st.write(description if description else "No description available")
-                        
-                        # Extracted Attributes
-                        st.write("**Extracted Attributes:**")
-                        attributes = prod.get("attributes", {})
-                        
-                        if attributes:
-                            # Filter non-null attributes
-                            attr_dict = {k: v for k, v in attributes.items() if v}
+                            # Find images in the original product folder
+                            image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
                             
-                            if attr_dict:
-                                st.table(attr_dict)
+                            # Try to find the original product folder
+                            original_folder = None
+                            for pf in product_folders:
+                                if pf.name == product_name:
+                                    original_folder = pf
+                                    break
+                            
+                            if original_folder:
+                                images = sorted([
+                                    f for f in original_folder.iterdir()
+                                    if f.suffix.lower() in image_extensions
+                                ])
+                                
+                                if images:
+                                    try:
+                                        img = Image.open(images[0])
+                                        st.image(img, caption=images[0].name, use_container_width=True)
+                                    except Exception as e:
+                                        st.warning(f"Could not load image: {e}")
+                                else:
+                                    st.info("No images found")
                             else:
-                                st.info("No attributes extracted.")
-                        else:
-                            st.info("No attributes available.")
+                                st.info("Original product folder not accessible")
                         
-                        # Enrichment Summary
-                        enrichment = prod.get("enrichment_summary", {})
-                        if enrichment:
-                            st.write("**Enrichment Summary:**")
-                            st.metric(
-                                "Filled Attributes",
-                                enrichment.get("filled_attributes", "N/A")
-                            )
-                        
-                        # Agent Metadata
-                        if prod.get("agent_metadata"):
-                            with st.expander("🤖 Agent Execution Details"):
-                                metadata = prod["agent_metadata"]
-                                st.json(metadata)
+                        # ==================== ATTRIBUTES COLUMN ====================
+                        with attr_col:
+                            # Product Description
+                            st.write("**Product Description:**")
+                            description = prod.get("product_description", "N/A")
+                            st.write(description if description else "No description available")
+                            
+                            # Extracted Attributes
+                            st.write("**Extracted Attributes:**")
+                            attributes = prod.get("attributes", {})
+                            
+                            if attributes:
+                                # Filter non-null attributes
+                                attr_dict = {k: v for k, v in attributes.items() if v}
+                                
+                                if attr_dict:
+                                    st.table(attr_dict)
+                                else:
+                                    st.info("No attributes extracted.")
+                            else:
+                                st.info("No attributes available.")
+                            
+                            # Enrichment Summary
+                            enrichment = prod.get("enrichment_summary", {})
+                            if enrichment:
+                                st.write("**Enrichment Summary:**")
+                                st.metric(
+                                    "Filled Attributes",
+                                    enrichment.get("filled_attributes", "N/A")
+                                )
+                            
+                            # Agent Metadata
+                            if prod.get("agent_metadata"):
+                                with st.expander("🤖 Agent Execution Details"):
+                                    metadata = prod["agent_metadata"]
+                                    st.json(metadata)
             
             # Only show download section if we have results
             if display_results and len(display_results) > 0:

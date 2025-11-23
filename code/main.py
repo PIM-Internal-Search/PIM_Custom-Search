@@ -1,16 +1,27 @@
 """
-Main ADK Entry Point for Product Attribute Extraction
-This module serves as the primary entry point for running the ADK sequential agents pipeline.
-It handles initialization, execution, and output management.
+Product Attribute Extraction Pipeline using Google ADK Sequential Agents
+
+This module implements the main extraction pipeline that:
+1. Prepares product images and metadata
+2. Executes the sequential agent pipeline (Image Extraction -> Search -> Enrichment)
+3. Processes and formats the results
 """
 
-import asyncio
-import json
 import os
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+import sys
+import json
 import base64
+import asyncio
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
+
+# Add the code directory to Python path
+sys.path.insert(0, str(Path(__file__).parent))
+
+# Import search utilities
+from search_utils import search_manufacturer_specs
+
 from google.adk import agents, models
 from google.adk.runners import RunConfig, InMemoryRunner
 
@@ -19,12 +30,9 @@ env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
 
-# Import the sequential agent
+# Import the sequential agent factory
 from agents import (
-    root_agent,
-    image_extraction_agent,
-    manufacturer_search_agent,
-    attribute_enrichment_agent,
+    create_agents,
     OFFICIAL_SPECS,
     ATTRIBUTES
 )
@@ -133,6 +141,41 @@ class ProductExtractionPipeline:
                 OFFICIAL_SPECS.get(product_name, {}),
                 indent=2
             )
+            
+            # Execute web searches BEFORE the pipeline to get manufacturer specs
+            print("[SEARCH] Executing pre-pipeline manufacturer spec search...")
+            from agents import GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX
+            
+            # Generate search queries based on product name
+            search_queries = [
+                {
+                    "query": f"{product_name} specifications site:canon.com OR site:sony.com",
+                    "priority": "high",
+                    "target_attributes": ["Display Type", "Viewfinder Type", "Battery Type"]
+                },
+                {
+                    "query": f"{product_name} technical specs connectivity ports",
+                    "priority": "high",
+                    "target_attributes": ["USB Port Type", "Memory Card Slot", "Connectivity Features"]
+                },
+                {
+                    "query": f"{product_name} video recording autofocus features",
+                    "priority": "medium",
+                    "target_attributes": ["Video Capabilities", "Autofocus System"]
+                }
+            ]
+            
+            try:
+                scraped_specs = search_manufacturer_specs(
+                    product_name=product_name,
+                    search_queries=search_queries,
+                    api_key=GOOGLE_CSE_API_KEY,
+                    cx=GOOGLE_CSE_CX
+                )
+                print(f"[SEARCH] Web search completed - found specifications")
+            except Exception as search_error:
+                print(f"[WARNING] Web search failed: {search_error}")
+                scraped_specs = "No web search results available."
 
             # Prepare the initial state for the sequential agent
             # The agents will use these values via state key injection
@@ -146,10 +189,13 @@ First Image: {Path(images[0]).name}
 Official Specs Available:
 {official_specs_json}
 
+Web Search Results:
+{scraped_specs}
+
 Please execute the three-step pipeline:
 1. Extract attributes from the image
-2. Generate search queries for missing specifications
-3. Enrich attributes with available official data and produce final profile
+2. Generate search queries for missing specifications (note: web search already performed above)
+3. Enrich attributes with available official data, web search results, and produce final profile
 
 Image to analyze is being provided separately."""
 
@@ -158,6 +204,9 @@ Image to analyze is being provided separately."""
             print(f"  - Stage 2: Manufacturer Search Agent")
             print(f"  - Stage 3: Attribute Enrichment Agent")
 
+            # Create fresh agents for this run to avoid event loop issues
+            root_agent = create_agents()
+            
             # Create runner for executing the agent
             runner = InMemoryRunner(agent=root_agent, app_name="product_extraction")
             
@@ -240,10 +289,50 @@ Image to analyze is being provided separately."""
                 run_config=run_cfg
             )
             
+            
             # Collect all events from the async generator
             events = []
+            search_queries_data = None
+            
             async for event in async_gen:
                 events.append(event)
+                print(f"[DEBUG] Event type: {type(event)}, Event: {event}")
+                
+                # Check if this event contains search queries from ManufacturerSearchAgent
+                if hasattr(event, 'content') and event.content:
+                    if hasattr(event.content, 'parts') and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, 'text') and part.text and 'search_queries' in part.text:
+                                try:
+                                    # Try to extract search queries JSON
+                                    text = part.text
+                                    if '```json' in text:
+                                        json_start = text.find('```json') + 7
+                                        json_end = text.find('```', json_start)
+                                        text = text[json_start:json_end].strip()
+                                    
+                                    potential_queries = json.loads(text)
+                                    if 'search_queries' in potential_queries:
+                                        search_queries_data = potential_queries
+                                        print(f"[SEARCH] Captured search queries from agent")
+                                except:
+                                    pass
+            
+            # Execute Google CSE searches if we have queries
+            scraped_specs = "No web search performed."
+            if search_queries_data and search_queries_data.get('search_queries'):
+                try:
+                    from agents import GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX
+                    scraped_specs = search_manufacturer_specs(
+                        product_name=product_name,
+                        search_queries=search_queries_data['search_queries'],
+                        api_key=GOOGLE_CSE_API_KEY,
+                        cx=GOOGLE_CSE_CX
+                    )
+                    print(f"[SEARCH] Web search completed successfully")
+                except Exception as search_error:
+                    print(f"[WARNING] Web search failed: {search_error}")
+                    scraped_specs = f"Web search failed: {str(search_error)}"
             
             # Extract the final result from the events
             # Look for the final agent response in the events
@@ -251,13 +340,16 @@ Image to analyze is being provided separately."""
             for event in reversed(events):
                 if hasattr(event, 'content') and event.content:
                     result = event.content
+                    print(f"[DEBUG] Found content in event: {result}")
                     break
             
             # If no content found, use the last event
             if result is None and events:
                 result = events[-1]
+                print(f"[DEBUG] No content found, using last event: {result}")
 
             print("[AGENTS] Sequential pipeline execution complete")
+            print(f"[DEBUG] Final result before parsing: {result}")
 
             # Parse results from the final agent output
             final_profile = self._parse_agent_output(result, product_name, len(images))
@@ -305,24 +397,62 @@ Image to analyze is being provided separately."""
             # The result might be an Event, Content, or dict
             result_data = {}
             
-            if hasattr(agent_result, 'content') and agent_result.content:
-                # Extract text from Content object
+            print(f"[DEBUG] agent_result type: {type(agent_result)}")
+            print(f"[DEBUG] agent_result has 'content': {hasattr(agent_result, 'content')}")
+            print(f"[DEBUG] agent_result has 'parts': {hasattr(agent_result, 'parts')}")
+            print(f"[DEBUG] agent_result has 'text': {hasattr(agent_result, 'text')}")
+            
+            # Try to extract text from various possible structures
+            raw_text = None
+            
+            # Check if it's a Content object with parts directly
+            if hasattr(agent_result, 'parts') and agent_result.parts:
+                text_parts = [p.text for p in agent_result.parts if hasattr(p, 'text') and p.text]
+                if text_parts:
+                    raw_text = ''.join(text_parts)
+                    print(f"[DEBUG] Extracted text from parts (direct): {raw_text[:200]}")
+            # Check if it has a content attribute with parts
+            elif hasattr(agent_result, 'content') and agent_result.content:
                 content = agent_result.content
                 if hasattr(content, 'parts') and content.parts:
                     text_parts = [p.text for p in content.parts if hasattr(p, 'text') and p.text]
                     if text_parts:
-                        try:
-                            result_data = json.loads(''.join(text_parts))
-                        except json.JSONDecodeError:
-                            result_data = {"raw_output": ''.join(text_parts)}
+                        raw_text = ''.join(text_parts)
+                        print(f"[DEBUG] Extracted text from content.parts: {raw_text[:200]}")
+            # Check if it's a dict
             elif isinstance(agent_result, dict):
                 result_data = agent_result
+                print(f"[DEBUG] agent_result is already a dict")
+            # Check if it has a text attribute
             elif hasattr(agent_result, 'text'):
+                raw_text = agent_result.text
+                print(f"[DEBUG] Extracted text from .text attribute: {raw_text[:200]}")
+            
+            # If we got raw text, parse it
+            if raw_text and not result_data:
+                # Strip markdown code blocks if present
+                if '```json' in raw_text:
+                    # Extract JSON from markdown code block
+                    json_start = raw_text.find('```json') + 7
+                    json_end = raw_text.find('```', json_start)
+                    raw_text = raw_text[json_start:json_end].strip()
+                elif '```' in raw_text:
+                    # Generic code block
+                    json_start = raw_text.find('```') + 3
+                    json_end = raw_text.find('```', json_start)
+                    raw_text = raw_text[json_start:json_end].strip()
+                
                 try:
-                    result_data = json.loads(agent_result.text)
-                except (json.JSONDecodeError, AttributeError):
-                    result_data = {"raw_output": str(agent_result)}
-            else:
+                    result_data = json.loads(raw_text)
+                    print(f"[DEBUG] Successfully parsed JSON with keys: {list(result_data.keys())}")
+                except json.JSONDecodeError as e:
+                    print(f"[DEBUG] JSON parse error: {e}")
+                    print(f"[DEBUG] Raw text: {raw_text[:500]}")
+                    result_data = {"raw_output": raw_text}
+            
+            # Fallback if nothing worked
+            if not result_data:
+                print(f"[DEBUG] No data extracted, using fallback")
                 result_data = {
                     "product_name": product_name,
                     "attributes": {},
@@ -330,7 +460,13 @@ Image to analyze is being provided separately."""
                     "raw_result": str(agent_result)
                 }
 
+
             # Normalize attributes format
+            print(f"[DEBUG] result_data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'NOT A DICT'}")
+            print(f"[DEBUG] result_data type: {type(result_data)}")
+            if isinstance(result_data, dict):
+                print(f"[DEBUG] result_data content (first 500 chars): {str(result_data)[:500]}")
+            
             normalized_profile = {
                 "product_name": product_name,
                 "image_count": image_count,
@@ -347,13 +483,19 @@ Image to analyze is being provided separately."""
 
             # Extract attribute data
             attrs = result_data.get("attributes", {})
+            print(f"[DEBUG] Attributes from result_data: {attrs}")
+            print(f"[DEBUG] Expected ATTRIBUTES list: {ATTRIBUTES}")
             for attr_name in ATTRIBUTES:
-                if isinstance(attrs.get(attr_name), dict):
+                attr_value = attrs.get(attr_name)
+                print(f"[DEBUG] Processing {attr_name}: {attr_value} (type: {type(attr_value)})")
+                if isinstance(attr_value, dict):
                     # Already structured with source and confidence
-                    normalized_profile["attributes"][attr_name] = attrs[attr_name].get("value")
+                    normalized_profile["attributes"][attr_name] = attr_value.get("value")
+                    print(f"[DEBUG]   -> Extracted value: {attr_value.get('value')}")
                 else:
                     # Simple string value
-                    normalized_profile["attributes"][attr_name] = attrs.get(attr_name)
+                    normalized_profile["attributes"][attr_name] = attr_value
+                    print(f"[DEBUG]   -> Using direct value: {attr_value}")
 
             return normalized_profile
 

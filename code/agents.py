@@ -22,8 +22,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or "AIzaSyDTmS4gXULRFVrB9HvqqM
 GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY") or "AIzaSyCI7a3T59iC_KXmCmsHQ6hj4gNmQUwUgsc"
 GOOGLE_CSE_CX = os.environ.get("GOOGLE_CSE_CX") or "3376ddfb787cd4499"
 
-# Initialize Gemini model for ADK
-gemini_model = models.Gemini(api_key=GEMINI_API_KEY)
+
 
 # Product attributes to extract
 ATTRIBUTES = [
@@ -46,15 +45,24 @@ OFFICIAL_SPECS = {
     }
 }
 
-# ============================================================================
-# AGENT 1: IMAGE EXTRACTION AGENT
-# Analyzes product images and extracts initial attributes
-# ============================================================================
 
-image_extraction_agent = agents.LlmAgent(
-    name="ImageExtractionAgent",
-    model=gemini_model,
-    instruction="""You are a Product Attribute Analysis Expert for cameras.
+def create_agents():
+    """
+    Factory function to create agents with fresh clients.
+    This ensures that clients (like Gemini) are initialized within the current event loop context.
+    """
+    # Initialize Gemini model for ADK
+    gemini_model = models.Gemini(api_key=GEMINI_API_KEY)
+
+    # ============================================================================
+    # AGENT 1: IMAGE EXTRACTION AGENT
+    # Analyzes product images and extracts initial attributes
+    # ============================================================================
+
+    image_extraction_agent = agents.LlmAgent(
+        name="ImageExtractionAgent",
+        model=gemini_model,
+        instruction=f"""You are a Product Attribute Analysis Expert for cameras.
 
 Your task is to analyze the provided product image(s) and extract the following attributes:
 {', '.join(ATTRIBUTES)}
@@ -64,6 +72,7 @@ Your task is to analyze the provided product image(s) and extract the following 
 2. For Weight: Extract weight in grams (e.g., "738g"). Look for any packaging or specification labels.
 3. For other attributes: Identify visible features, text, labels, or specifications in the image.
 4. If an attribute is not visible or cannot be determined from the image, return null for that attribute.
+5. **IMPORTANT**: Examine the image VERY CAREFULLY for all visible details - buttons, ports, displays, viewfinders, hot shoes, tripod mounts, etc.
 
 **Output Format:**
 Return ONLY valid JSON (no markdown, no code blocks) with this exact structure:
@@ -90,26 +99,26 @@ Return ONLY valid JSON (no markdown, no code blocks) with this exact structure:
         "Video Capabilities": "value or null",
         "Autofocus System": "value or null"
     }},
-    "product_description": "A detailed marketing description of the product based on the image",
+    "product_description": "Write a compelling 2-3 sentence e-commerce product description that highlights key features and benefits. Use persuasive language that would appeal to photographers. Focus on what makes this camera special.",
     "confidence_score": "high/medium/low",
     "images_analyzed": 1,
     "extraction_notes": "Any important observations about the extraction"
 }}
 
-Be thorough but concise. Focus on accuracy over completeness.""",
-    description="Extracts product attributes from camera images using vision analysis",
-    output_key="extracted_attributes"  # Stores output in state['extracted_attributes']
-)
+Be thorough and examine every detail visible in the image. Focus on accuracy over completeness.""",
+        description="Extracts product attributes from camera images using vision analysis",
+        output_key="extracted_attributes"  # Stores output in state['extracted_attributes']
+    )
 
-# ============================================================================
-# AGENT 2: MANUFACTURER SEARCH AGENT
-# Searches for and extracts manufacturer specifications
-# ============================================================================
+    # ============================================================================
+    # AGENT 2: MANUFACTURER SEARCH AGENT
+    # Searches for and extracts manufacturer specifications
+    # ============================================================================
 
-manufacturer_search_agent = agents.LlmAgent(
-    name="ManufacturerSearchAgent",
-    model=gemini_model,
-    instruction="""You are a Manufacturer Specification Research Agent.
+    manufacturer_search_agent = agents.LlmAgent(
+        name="ManufacturerSearchAgent",
+        model=gemini_model,
+        instruction="""You are a Manufacturer Specification Research Agent.
 
 **Context:**
 Product Name: {product_name}
@@ -141,19 +150,19 @@ Return ONLY valid JSON (no markdown, no code blocks):
 }}
 
 Focus on generating queries that will retrieve official manufacturer specification sheets and product pages.""",
-    description="Generates targeted search queries to find manufacturer specifications",
-    output_key="search_queries"  # Stores output in state['search_queries']
-)
+        description="Generates targeted search queries to find manufacturer specifications",
+        output_key="search_queries"  # Stores output in state['search_queries']
+    )
 
-# ============================================================================
-# AGENT 3: ATTRIBUTE ENRICHMENT AGENT
-# Enriches attributes with manufacturer data and finalizes results
-# ============================================================================
+    # ============================================================================
+    # AGENT 3: ATTRIBUTE ENRICHMENT AGENT
+    # Enriches attributes with manufacturer data and finalizes results
+    # ============================================================================
 
-attribute_enrichment_agent = agents.LlmAgent(
-    name="AttributeEnrichmentAgent",
-    model=gemini_model,
-    instruction="""You are an Attribute Enrichment and Finalization Expert.
+    attribute_enrichment_agent = agents.LlmAgent(
+        name="AttributeEnrichmentAgent",
+        model=gemini_model,
+        instruction="""You are an Attribute Enrichment and Finalization Expert.
 
 **Context:**
 Product Name: {product_name}
@@ -171,7 +180,8 @@ Official Specs Available:
 2. Consider the search queries that were generated to find missing data
 3. Apply any available official specifications from the OFFICIAL_SPECS_AVAILABLE section
 4. Fill in null values with the most reliable information available
-5. Provide a final, complete product profile
+5. Create a compelling e-commerce product description
+6. Provide a final, complete product profile
 
 **Enrichment Rules:**
 - Only fill attributes that were missing (null) from initial extraction
@@ -179,6 +189,13 @@ Official Specs Available:
 - If a value remains unknown, keep it as null
 - Ensure consistency across all attribute values
 - Add confidence scores for each filled-in attribute
+
+**Product Description Guidelines:**
+- Write 2-3 compelling sentences that would appear on an e-commerce website
+- Highlight key features and benefits that appeal to photographers
+- Use persuasive, professional language
+- Focus on what makes this camera special and desirable
+- Example: "Capture stunning professional-quality images with the Canon EOS R5 Mark II, featuring a cutting-edge full-frame sensor and advanced autofocus system. This premium mirrorless camera combines robust build quality with intuitive controls, making it perfect for both studio work and field photography. With its versatile Canon RF mount and comprehensive connectivity options, you'll have everything you need to bring your creative vision to life."
 
 **Output Format:**
 Return ONLY valid JSON (no markdown, no code blocks):
@@ -206,7 +223,7 @@ Return ONLY valid JSON (no markdown, no code blocks):
         "Video Capabilities": {{"value": "value or null", "source": "image/official/inferred", "confidence": "high/medium/low"}},
         "Autofocus System": {{"value": "value or null", "source": "image/official/inferred", "confidence": "high/medium/low"}}
     }},
-    "product_description": "{product_description}",
+    "product_description": "Write a compelling 2-3 sentence e-commerce description here",
     "enrichment_summary": {{
         "total_attributes": 20,
         "filled_attributes": "number of non-null values",
@@ -216,33 +233,38 @@ Return ONLY valid JSON (no markdown, no code blocks):
     "final_status": "complete"
 }}
 
-Produce a comprehensive, accurate product profile ready for export.""",
-    description="Enriches attributes and produces final product profile",
-    output_key="final_product_profile"  # Stores output in state['final_product_profile']
-)
+Produce a comprehensive, accurate product profile with compelling e-commerce copy ready for export.""",
+        description="Enriches attributes and produces final product profile",
+        output_key="final_product_profile"  # Stores output in state['final_product_profile']
+    )
 
-# ============================================================================
-# SEQUENTIAL AGENT ORCHESTRATOR
-# Chains the three agents together in sequence
-# ============================================================================
+    # ============================================================================
+    # SEQUENTIAL AGENT ORCHESTRATOR
+    # Chains the three agents together in sequence
+    # ============================================================================
 
-product_extraction_sequential_agent = agents.SequentialAgent(
-    name="ProductExtractionPipeline",
-    sub_agents=[
-        image_extraction_agent,
-        manufacturer_search_agent,
-        attribute_enrichment_agent
-    ],
-    description="Sequential pipeline: Extract attributes from images -> Search for manufacturer specs -> Enrich and finalize attributes"
-)
+    product_extraction_sequential_agent = agents.SequentialAgent(
+        name="ProductExtractionPipeline",
+        sub_agents=[
+            image_extraction_agent,
+            manufacturer_search_agent,
+            attribute_enrichment_agent
+        ],
+        description="Sequential pipeline: Extract attributes from images -> Search for manufacturer specs -> Enrich and finalize attributes"
+    )
 
-# Root agent for ADK compatibility
-root_agent = product_extraction_sequential_agent
+    return product_extraction_sequential_agent
+
+# Create a default instance for backward compatibility if needed, 
+# but prefer using create_agents()
+try:
+    root_agent = create_agents()
+except Exception:
+    root_agent = None
 
 if __name__ == "__main__":
+    agent = create_agents()
     print("ADK Sequential Agents Module")
-    print(f"- Image Extraction Agent: {image_extraction_agent.name}")
-    print(f"- Manufacturer Search Agent: {manufacturer_search_agent.name}")
-    print(f"- Attribute Enrichment Agent: {attribute_enrichment_agent.name}")
-    print(f"- Sequential Agent: {product_extraction_sequential_agent.name}")
+    print(f"- Sequential Agent: {agent.name}")
     print("\nRoot agent ready for deployment")
+
