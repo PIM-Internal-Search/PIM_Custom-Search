@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 # Add the code directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Import search utilities (kept for potential future use)
-# from search_utils import search_manufacturer_specs
+# Import search utilities
+from search_utils import search_manufacturer_specs
 
 from google.adk import agents, models
 from google.adk.runners import RunConfig, InMemoryRunner
@@ -33,6 +33,7 @@ if env_path.exists():
 # Import the sequential agent factory
 from agents import (
     create_agents,
+    OFFICIAL_SPECS,
     ATTRIBUTES
 )
 
@@ -135,7 +136,46 @@ class ProductExtractionPipeline:
                 image_data = self.prepare_image_data(images[0])
                 print(f"[PREPARED] Image: {Path(images[0]).name}")
 
-            # Note: Web searches are now handled by ManufacturerSearchAgent using Google CSE API
+            # Get official specs if available
+            official_specs_json = json.dumps(
+                OFFICIAL_SPECS.get(product_name, {}),
+                indent=2
+            )
+            
+            # Execute web searches BEFORE the pipeline to get manufacturer specs
+            print("[SEARCH] Executing pre-pipeline manufacturer spec search...")
+            from agents import GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX
+            
+            # Generate search queries based on product name
+            search_queries = [
+                {
+                    "query": f"{product_name} specifications site:canon.com OR site:sony.com",
+                    "priority": "high",
+                    "target_attributes": ["Display Type", "Viewfinder Type", "Battery Type"]
+                },
+                {
+                    "query": f"{product_name} technical specs connectivity ports",
+                    "priority": "high",
+                    "target_attributes": ["USB Port Type", "Memory Card Slot", "Connectivity Features"]
+                },
+                {
+                    "query": f"{product_name} video recording autofocus features",
+                    "priority": "medium",
+                    "target_attributes": ["Video Capabilities", "Autofocus System"]
+                }
+            ]
+            
+            try:
+                scraped_specs = search_manufacturer_specs(
+                    product_name=product_name,
+                    search_queries=search_queries,
+                    api_key=GOOGLE_CSE_API_KEY,
+                    cx=GOOGLE_CSE_CX
+                )
+                print(f"[SEARCH] Web search completed - found specifications")
+            except Exception as search_error:
+                print(f"[WARNING] Web search failed: {search_error}")
+                scraped_specs = "No web search results available."
 
             # Prepare the initial state for the sequential agent
             # The agents will use these values via state key injection
@@ -146,10 +186,16 @@ Product Folder: {product_folder}
 Images Found: {len(images)}
 First Image: {Path(images[0]).name}
 
+Official Specs Available:
+{official_specs_json}
+
+Web Search Results:
+{scraped_specs}
+
 Please execute the three-step pipeline:
 1. Extract attributes from the image
-2. Search for manufacturer specifications using Google Custom Search API
-3. Enrich attributes with search results and produce final profile
+2. Generate search queries for missing specifications (note: web search already performed above)
+3. Enrich attributes with available official data, web search results, and produce final profile
 
 Image to analyze is being provided separately."""
 
@@ -228,6 +274,7 @@ Image to analyze is being provided separately."""
             # will be added by the agents as they execute
             initial_state = {
                 "product_name": product_name,
+                "official_specs_json": official_specs_json,
                 "product_folder": product_folder,
                 "images_found": len(images),
                 "product_description": ""  # Will be filled by agent 1
@@ -245,10 +292,47 @@ Image to analyze is being provided separately."""
             
             # Collect all events from the async generator
             events = []
+            search_queries_data = None
             
             async for event in async_gen:
                 events.append(event)
                 print(f"[DEBUG] Event type: {type(event)}, Event: {event}")
+                
+                # Check if this event contains search queries from ManufacturerSearchAgent
+                if hasattr(event, 'content') and event.content:
+                    if hasattr(event.content, 'parts') and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, 'text') and part.text and 'search_queries' in part.text:
+                                try:
+                                    # Try to extract search queries JSON
+                                    text = part.text
+                                    if '```json' in text:
+                                        json_start = text.find('```json') + 7
+                                        json_end = text.find('```', json_start)
+                                        text = text[json_start:json_end].strip()
+                                    
+                                    potential_queries = json.loads(text)
+                                    if 'search_queries' in potential_queries:
+                                        search_queries_data = potential_queries
+                                        print(f"[SEARCH] Captured search queries from agent")
+                                except:
+                                    pass
+            
+            # Execute Google CSE searches if we have queries
+            scraped_specs = "No web search performed."
+            if search_queries_data and search_queries_data.get('search_queries'):
+                try:
+                    from agents import GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX
+                    scraped_specs = search_manufacturer_specs(
+                        product_name=product_name,
+                        search_queries=search_queries_data['search_queries'],
+                        api_key=GOOGLE_CSE_API_KEY,
+                        cx=GOOGLE_CSE_CX
+                    )
+                    print(f"[SEARCH] Web search completed successfully")
+                except Exception as search_error:
+                    print(f"[WARNING] Web search failed: {search_error}")
+                    scraped_specs = f"Web search failed: {str(search_error)}"
             
             # Extract the final result from the events
             # Look for the final agent response in the events

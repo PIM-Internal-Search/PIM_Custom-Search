@@ -1,0 +1,6 @@
+# Google Gemini API Key
+GEMINI_API_KEY="AIzaSyDTmS4gXULRFVrB9HvqqMGwDQkD-vmgX5M"
+
+# Google Custom Search Engine API Keys
+GOOGLE_CSE_API_KEY="AIzaSyCI7a3T59iC_KXmCmsHQ6hj4gNmQUwUgsc"
+GOOGLE_CSE_CX="3376ddfb787cd4499"

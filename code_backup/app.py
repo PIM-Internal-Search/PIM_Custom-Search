@@ -31,8 +31,8 @@ and extract all product attributes automatically.
 
 **Pipeline Architecture:**
 1. 🖼️ **Image Extraction Agent** - Analyzes product images and extracts visible attributes
-2. 🔍 **Manufacturer Search Agent** - Searches for official specifications using Google Custom Search API
-3. ✨ **Attribute Enrichment Agent** - Compares and enriches attributes with manufacturer data and finalizes results
+2. 🔍 **Manufacturer Search Agent** - Generates targeted queries to find official specifications
+3. ✨ **Attribute Enrichment Agent** - Enriches attributes with manufacturer data and finalizes results
 """)
 
 # ============================================================================
@@ -83,88 +83,100 @@ def get_pipeline():
     """Initialize the ADK extraction pipeline"""
     return ProductExtractionPipeline()
 
-# Function to open folder picker using tkinter
-def select_folder():
-    """Open Windows Explorer folder picker"""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        
-        # Create a root window and hide it
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes('-topmost', 1)
-        
-        # Open folder picker dialog
-        folder_path = filedialog.askdirectory(
-            title="Select Product Folder",
-            initialdir=r"c:\AI Projects\attribute_extraction_app_agentic\raw_images"
-        )
-        
-        root.destroy()
-        
-        if folder_path:
-            st.session_state.source_folder = folder_path
-            st.session_state.product_folders = [
-                p for p in Path(folder_path).iterdir() 
-                if p.is_dir() and not p.name.startswith('__')
-            ]
-            st.session_state.folder_loaded = True
-            return folder_path
-        return None
-    except Exception as e:
-        st.error(f"Error opening folder picker: {str(e)}")
-        return None
-
 pipeline = get_pipeline()
 
 # ============================================================================
-# FOLDER SELECTION WITH WINDOWS EXPLORER
+# INPUT METHOD SELECTION
 # ============================================================================
 
 st.markdown("---")
-st.subheader("📥 Select Product Folder")
+st.subheader("📥 Input Configuration")
+
+input_method = st.radio(
+    "Select input method:",
+    ["📁 Folder Path", "📦 Upload ZIP File"],
+    horizontal=True
+)
 
 # Initialize session state for inputs
 if 'source_folder' not in st.session_state:
     st.session_state.source_folder = None
 if 'product_folders' not in st.session_state:
     st.session_state.product_folders = None
-if 'folder_loaded' not in st.session_state:
-    st.session_state.folder_loaded = False
-
-
-
-# Select Products Button
-col1, col2 = st.columns([2, 3])
-
-with col1:
-    if st.button("📂 Select Products", use_container_width=True, type="primary"):
-        selected_folder = select_folder()
-        if selected_folder:
-            st.rerun()  # Refresh to show the loaded folder
-
-with col2:
-    if st.session_state.source_folder:
-        st.success(f"✓ Folder: {st.session_state.source_folder}")
-        if st.session_state.product_folders:
-            st.info(f"Found {len(st.session_state.product_folders)} product folder(s)")
-
-# Show product list if folder is loaded
-if st.session_state.folder_loaded and st.session_state.product_folders:
-    st.markdown("---")
-    st.subheader("📦 Products Found")
-    
-    # Display product folders in a nice format
-    cols = st.columns(3)
-    for idx, product_folder in enumerate(st.session_state.product_folders):
-        with cols[idx % 3]:
-            st.write(f"📷 {product_folder.name}")
 
 source_folder = st.session_state.source_folder
 product_folders = st.session_state.product_folders
-base_path = st.session_state.source_folder
+base_path = st.session_state.source_folder # simplified
 
+
+# ============================================================================
+# FOLDER PATH INPUT
+# ============================================================================
+
+if input_method == "📁 Folder Path":
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        folder_input = st.text_input(
+            "Folder path",
+            value="c:\\AI Projects\\attribute_extraction_app_agentic\\raw_images",
+            placeholder="e.g., c:\\path\\to\\images or /home/user/images"
+        )
+    
+    with col2:
+        load_button = st.button("📂 Load Folder", use_container_width=True)
+    
+    if load_button:
+        if os.path.isdir(folder_input):
+            st.session_state.source_folder = folder_input
+            st.session_state.product_folders = [
+                p for p in Path(folder_input).iterdir() 
+                if p.is_dir() and not p.name.startswith('__')
+            ]
+            source_folder = st.session_state.source_folder
+            product_folders = st.session_state.product_folders
+            base_path = folder_input
+            st.success(f"✓ Folder loaded: {folder_input}")
+            if product_folders:
+                st.info(f"Found {len(product_folders)} product folder(s)")
+        else:
+            st.error(f"❌ Folder not found: {folder_input}")
+
+# ============================================================================
+# ZIP FILE UPLOAD
+# ============================================================================
+
+else:  # ZIP upload
+    uploaded_file = st.file_uploader(
+        "Upload a ZIP file containing product folders",
+        type=["zip"],
+        help="Each folder should contain images for a single product"
+    )
+    
+    if uploaded_file is not None:
+        tmpdir = tempfile.mkdtemp()
+        zip_path = Path(tmpdir) / "upload.zip"
+        
+        with open(zip_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        try:
+            with zipfile.ZipFile(zip_path, "r") as z:
+                z.extractall(tmpdir)
+            
+            st.session_state.product_folders = [
+                p for p in Path(tmpdir).iterdir()
+                if p.is_dir() and not p.name.startswith('__')
+            ]
+            st.session_state.source_folder = "zip"
+            source_folder = st.session_state.source_folder
+            product_folders = st.session_state.product_folders
+            base_path = tmpdir
+            st.success(f"✓ ZIP file uploaded successfully")
+            st.info(f"Found {len(product_folders)} product folder(s)")
+        except Exception as e:
+            st.error(f"Error extracting ZIP: {str(e)}")
+            product_folders = None
 
 # ============================================================================
 # PROCESSING
@@ -179,14 +191,14 @@ if source_folder and product_folders and len(product_folders) > 0:
     if 'processing_started' not in st.session_state:
         st.session_state.processing_started = False
     
-    # Button to start processing - renamed to "Show Product Attributes"
-    button_clicked = st.button("🚀 Show Product Attributes", key="process_btn", use_container_width=True, type="primary")
+    # Button to start processing
+    button_clicked = st.button("🚀 Start Extraction Pipeline", key="process_btn", use_container_width=True)
     
     # Debug: Show button state
     if button_clicked:
         st.session_state.processing_started = True
         st.session_state.extraction_results = []  # Reset results
-        st.success("✅ Starting attribute extraction pipeline...")
+        st.success("✅ Button clicked! Initializing pipeline...")
     
     # Process if button was clicked or processing is in progress
     if button_clicked or st.session_state.processing_started:
@@ -474,8 +486,10 @@ if source_folder and product_folders and len(product_folders) > 0:
 # INITIAL GUIDANCE
 # ============================================================================
 
-if not st.session_state.source_folder:
-    st.info("👉 Click '📂 Select Products' to choose a folder containing product images")
+elif input_method == "📁 Folder Path" and not source_folder:
+    st.info("👉 Enter a folder path and click '📂 Load Folder' to start")
+else:
+    st.info("👉 Upload a ZIP file to start processing")
 
 # ============================================================================
 # FOOTER

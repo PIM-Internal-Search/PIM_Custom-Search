@@ -1,0 +1,6 @@
+google-adk
+streamlit
+python-dotenv
+Pillow
+requests
+pandas
